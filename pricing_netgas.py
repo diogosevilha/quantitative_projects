@@ -1,35 +1,106 @@
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+import numpy as np
 from datetime import datetime, timedelta
-import pandas
-import numpy
+import matplotlib.pyplot as plt
 
 
-data = {
-    'Date': pd.date_range(start='2020-10-31', end='2024-09-30', freq='M'),
-    'Price': [10.2, 11.1, 12.5, 13.2, 14.0, 15.3, 16.2, 17.5, 18.0, 19.2, 20.1, 21.4, 22.0, 23.2, 24.1, 25.3, 26.5, 27.4, 28.2, 29.0, 30.2, 31.0, 32.4, 33.1]
-}
-
-df = pd.DataFrame(data)
-
-def estimate_gas_price(input_date):
-    # Convert the input date to a datetime object
-    input_date = datetime.strptime(input_date, '%Y-%m-%d')
+class Pricing(object):
+    def __init__(self) -> None:
+        pass
     
-    # Create a DataFrame with the given input date and previous 12 months
-    end_date = input_date + timedelta(days=365)
-    date_range = pd.date_range(start=end_date - timedelta(days=365), end=end_date, freq='M')
-    input_df = df[df['Date'].isin(date_range)]
+    def _load_historical_gas_price(self, input_gaspricecsv):
+        # # #
+        # input_gaspricecsv: csv that contains the commoditie's historical price columns {"Dates" : '%m/%d/%y', "Prices" : "1.09E+01"}
+        # # #
 
-    # Perform linear regression
-    X = input_df.index.values.reshape(-1, 1)
-    y = input_df['Price']
-    model = LinearRegression()
-    model.fit(X, y)
+        # load into a dataframe the gas price data from a CSV file
+        df = pd.read_csv('input_gaspricecsv.csv', 
+                         parse_dates=['Dates'],
+                         date_parser=lambda x: datetime.strptime(x, '%m/%d/%y')
+                        )
+        
+        # Rename column Dates to Date
+        df = df.rename(columns = {"Dates" : "Date"})
 
-    # Predict gas price for the future date
-    future_date = pd.date_range(start=input_date, end=input_date + timedelta(days=365), freq='M')
-    future_x = len(input_df) + len(future_date) - 1
-    future_price = model.predict([[future_x]])[0]
+        return df
+
+    def estimate_gas_price(self, input_datestring):
+        # # #
+        # Input_date: date that corresponds to the wanted price, preference to be %Y-%m-%d
+        # # #
+
+        # Transform input date in a %Y-%m-%d striptime
+        input_date = datetime.strptime(input_datestring, '%Y-%m-%d')
     
-    return future_price
+        # Set a end_date to the range of 365 dc
+        end_date = input_date + timedelta(days=365)
+
+        # Define a date_range that is defined Monthly
+        date_range = pd.date_range(start=end_date - timedelta(days=365), end=end_date, freq='M')
+    
+        # Load historical data
+        df = self.load_historical_gas_price()
+        
+        # Define a conditional Boolean to comparing Date and date_range and create a df only True matchs
+        input_df = df[df['Date'].isin(date_range)]
+
+        X = input_df.index.values
+        y = input_df['Price']
+
+        n = len(X)
+        sum_x = sum(X)
+        sum_y = sum(y)
+        sum_xy = sum(X * y)
+        sum_x_squared = sum(X**2)
+
+        # Calculate the coefficients of the linear regression equation
+        slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x_squared - sum_x**2)
+        intercept = (sum_y - slope * sum_x) / n
+
+        # Predict gas price for the future date
+        future_x = len(df) + (input_date.year - df['Date'].iloc[-1].year) * 12 + (input_date.month - df['Date'].iloc[-1].month)
+        future_price = intercept + slope * future_x
+
+        return future_price
+
+    def estimate_gas_price_np(self, input_datestring):
+        
+        input_date = datetime.strptime(input_datestring, '%Y-%m-%d')
+        end_date = input_date + timedelta(days=365)
+        date_range = pd.date_range(start=end_date - timedelta(days=365), end=end_date, freq='M')
+        df = self.load_historical_gas_price()
+        input_df = df[df['Date'].isin(date_range)]
+
+        X = np.arange(len(input_df))
+        y = input_df['Price'].values
+
+        # Construir a matriz X adicionando uma coluna de uns para o termo constante
+        X_matrix = np.column_stack((np.ones(len(X)), X))
+
+        # Calcular os coeficientes da regressão linear usando álgebra de matrizes
+        coeficientes = np.linalg.lstsq(X_matrix, y, rcond=None)[0]
+
+        # Prever o preço do gás para a data futura
+        future_x = len(df) + (input_date.year - df['Date'].iloc[-1].year) * 12 + (input_date.month - df['Date'].iloc[-1].month)
+        future_price = coeficientes[0] + coeficientes[1] * future_x
+        
+        return future_price
+
+
+if __name__ == "__main__":
+
+    # Input date for prediction
+    input_date = '2023-09-23'
+    estimated_price = Pricing().estimate_gas_price(input_date)
+    print(f"Estimated gas price for {input_date}: ${estimated_price:.2f}")
+
+    # Plotting historical data and the estimated future price
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['Date'], df['Price'], label='Historical Prices', marker='o')
+    plt.plot(pd.date_range(start=input_date, end=input_date + timedelta(days=365), freq='M'), [estimated_price] * 13, label='Estimated Future Prices', linestyle='--', marker='o')
+    plt.xlabel('Date')
+    plt.ylabel('Price')
+    plt.title('Gas Price Analysis')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
